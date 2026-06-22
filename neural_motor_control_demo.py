@@ -5,6 +5,7 @@ import scipy as sp
 import matplotlib.pyplot as plt
 import json
 import datetime
+import strain_gauge_adapter as sga
 from joint_adapter import JointAdapter
 from pathlib import Path
 from plot_data import plot_data
@@ -34,7 +35,7 @@ def main():
     r_net = 20
 
     # Load robot model
-    mech_model_file_path = 'mjcf/Drosophibot_floating_custom_actuators20260606.xml'
+    mech_model_file_path = 'mjcf/Drosophibot_floating_custom_actuators.xml'
     drosophibot = mujoco.MjModel.from_xml_path(filename=mech_model_file_path)
 
     # Get robot state
@@ -60,11 +61,13 @@ def main():
         #  Mujoco timesteps are shorter, so we need to run multiple Mujoco steps before updating sns
         sns_shorter = False
         min_dt = mj_dt
+        update_ratio = 0
         raise "sns_dt must be less than mj_dt when measured in seconds"
     else:
         #  Timesteps are equal and the situation is straightforward
         sns_shorter = None
         min_dt = sns_dt_in_seconds
+        update_ratio = 1
 
     tvec = np.arange(start=0, step=min_dt, stop=tmax)
     sns_tvec = np.arange(start=0, step=sns_dt_in_seconds, stop=tmax)
@@ -95,62 +98,139 @@ def main():
     joint_props = {}
     j_a = {}
 
-    joint_props["LF_ThC1"] = {"ctrl_index": None, "qpos_index": None, "is_ctr": False, "ext_pep_rest_volt": -5,
-                              "flx_pep_rest_volt": -5}
-    joint_props["LF_ThC3"] = {"ctrl_index": None, "qpos_index": None, "is_ctr": False, "ext_pep_rest_volt": -5,
-                              "flx_pep_rest_volt": -5}
-    joint_props["LF_CTr"] = {"ctrl_index": None, "qpos_index": None, "is_ctr": True, "ext_pep_rest_volt": -5,
-                             "flx_pep_rest_volt": -5}
-    joint_props["LF_TrF"] = {"ctrl_index": None, "qpos_index": None, "is_ctr": False, "ext_pep_rest_volt": -5,
-                             "flx_pep_rest_volt": -5}
-    joint_props["LF_FTi"] = {"ctrl_index": None, "qpos_index": None, "is_ctr": False, "ext_pep_rest_volt": -5,
-                             "flx_pep_rest_volt": -5}
+    joint_props["LF"] = {}
+    joint_props["LF"]["ThC1"] = {"ctrl_index": None, "qpos_index": None, "is_ctr": False, "ext_pep_rest_volt": -5,
+                                 "flx_pep_rest_volt": -5}
+    joint_props["LF"]["ThC3"] = {"ctrl_index": None, "qpos_index": None, "is_ctr": False, "ext_pep_rest_volt": -5,
+                                 "flx_pep_rest_volt": -5}
+    joint_props["LF"]["CTr"] = {"ctrl_index": None, "qpos_index": None, "is_ctr": True, "ext_pep_rest_volt": -5,
+                                "flx_pep_rest_volt": -5}
+    joint_props["LF"]["TrF"] = {"ctrl_index": None, "qpos_index": None, "is_ctr": False, "ext_pep_rest_volt": -5,
+                                "flx_pep_rest_volt": -5}
+    joint_props["LF"]["FTi"] = {"ctrl_index": None, "qpos_index": None, "is_ctr": False, "ext_pep_rest_volt": -5,
+                                "flx_pep_rest_volt": -5}
 
-    for key, value in joint_props.items():
-        joint_props[key]["ctrl_index"] = mujoco.mj_name2id(drosophibot, mujoco.mjtObj.mjOBJ_ACTUATOR, name=key)
-        joint_props[key]["qpos_index"] = mujoco.mj_name2id(drosophibot, mujoco.mjtObj.mjOBJ_JOINT, name=key)
+    j_a["LF"] = {}
 
-        generic_names = build_joint_control_net(net, r_net=r_net, is_ctr=joint_props[key]["is_ctr"], joint_name=key,
-                                                ext_pep_rest=joint_props[key]["ext_pep_rest_volt"],
-                                                flx_pep_rest=joint_props[key]["flx_pep_rest_volt"], gmax_ion=g_ion_new,
-                                                tau_slow=1400, st_sw_ratio=st_sw_ratio)
-        all_names[key] = generic_names
+    strain_gauge_props = {}
+    strain_gauge_props["LF"] = {}
+    strain_gauge_data = {}
+    strain_gauge_data["LF"] = {}
 
-        generic_names = build_descending_pathways(net, r_net=r_net, k_step_len=0.9, k_rotate=0, joint_name=key,
-                                                  ext_in_stance=True, body_name=body_name)
-        all_names[key].update(generic_names)  # generic_names is currently empty, so it just goofs up all_names.
-        # replace ctrl_index, etc. with joint_props dict
+    #  By default, a capsule geom is extended along the z axis. This means that trochanter2, which is extended
+    #  laterally, has (anterior-posterior x, vertical y, and) lateral z axis.
+    #  LF_Trochanter2's geom has euler 0 90 0, so rotating 90 degrees about the y axis means the x-axis is lateral, the
+    #  y-axis is vertical, and the z-axis is anterior-posterior. Thus, Gp1+2 are encoded in y-axis torque (2nd element,
+    #  index 1) and Gp3+4 are encoded in z-axis torque (3rd element, index 2).
+    strain_gauge_props["LF"]["GP1_CS"] = {"torque_sensor_index": 1, "sensory_neuron_index": None, "a": 1, "b": 0,
+                                          "min_strain": -1000, "current_at_min_strain": 0, "max_strain": 1000,
+                                          "current_at_max_strain": 0}
+    strain_gauge_props["LF"]["GP2_CS"] = {"torque_sensor_index": 1, "sensory_neuron_index": None, "a": -1, "b": 0,
+                                          "min_strain": -1000, "current_at_min_strain": 0, "max_strain": 1000,
+                                          "current_at_max_strain": 0}
+    strain_gauge_props["LF"]["GP3_CS"] = {"torque_sensor_index": 2, "sensory_neuron_index": None, "a": -10, "b": 0,
+                                          "min_strain": -1000, "current_at_min_strain": 0, "max_strain": 1000,
+                                          "current_at_max_strain": 0}
+    strain_gauge_props["LF"]["GP4_CS"] = {"torque_sensor_index": 2, "sensory_neuron_index": None, "a": 10, "b": 0,
+                                          "min_strain": -1000, "current_at_min_strain": 0, "max_strain": 1000,
+                                          "current_at_max_strain": 0}
+    strain_gauge_props["LF"]["GP6A_CS"] = {"torque_sensor_index": 5, "sensory_neuron_index": None, "a": 1, "b": 0,
+                                           "min_strain": -1000, "current_at_min_strain": 0, "max_strain": 1000,
+                                           "current_at_max_strain": 0}
+    strain_gauge_props["LF"]["GP6B_CS"] = {"torque_sensor_index": 5, "sensory_neuron_index": None, "a": -1, "b": 0,
+                                           "min_strain": -1000, "current_at_min_strain": 0, "max_strain": 1000,
+                                           "current_at_max_strain": 0}
 
-        j_a[key] = JointAdapter(name=key, joint_props=value,
-                                mn_indices=[all_names[key]["Ext_MN"], all_names[key]["Flx_MN"]],
-                                sens_neur_indices=[all_names[key]["Ext_Pos_SN"], all_names[key]["Flx_Pos_SN"],
-                                                   all_names[key]["Ext_Vel_SN"], all_names[key]["Flx_Vel_SN"]],
-                                resting_posture_angle=0, min_angle=-0.5, max_angle=0.5, swing_duration=sw_duration,
-                                max_stance_duration=st_sw_ratio*sw_duration, servo_max_speed=mx_28_no_load_speed,
-                                servo_kp=servo_kp)
+    strain_gauge_data["LF"]["GP1_CS"] = {"reading": 0}
+    strain_gauge_data["LF"]["GP2_CS"] = {"reading": 0}
+    strain_gauge_data["LF"]["GP3_CS"] = {"reading": 0}
+    strain_gauge_data["LF"]["GP4_CS"] = {"reading": 0}
+    strain_gauge_data["LF"]["GP6A_CS"] = {"reading": 0}
+    strain_gauge_data["LF"]["GP6B_CS"] = {"reading": 0}
 
-        # j_a[key].verify_motor_maps()
+    max_joint_index = 0
+    max_actuator_index = 0
+    num_strain_gauges = 0
+    #  For each joint (may include multiple legs)
+    for leg_key, leg_value in joint_props.items():
+        for jt_key, jt_value in joint_props[leg_key].items():
+            key = leg_key + "_" + jt_key
+            joint_props[leg_key][jt_key]["ctrl_index"] = (
+                mujoco.mj_name2id(drosophibot, mujoco.mjtObj.mjOBJ_ACTUATOR, name=key))
+            joint_props[leg_key][jt_key]["qpos_index"] = (
+                mujoco.mj_name2id(drosophibot, mujoco.mjtObj.mjOBJ_JOINT, name=key))
 
+            generic_names = build_joint_control_net(net, r_net=r_net, is_ctr=joint_props[leg_key][jt_key]["is_ctr"],
+                                                    joint_name=key,
+                                                    ext_pep_rest=joint_props[leg_key][jt_key]["ext_pep_rest_volt"],
+                                                    flx_pep_rest=joint_props[leg_key][jt_key]["flx_pep_rest_volt"],
+                                                    gmax_ion=g_ion_new, tau_slow=1400, st_sw_ratio=st_sw_ratio)
+
+            all_names[key] = generic_names
+
+            joint_props[leg_key][jt_key]["motor_neuron_indices"] = [all_names[key]["Ext_MN"], all_names[key]["Flx_MN"]]
+            joint_props[leg_key][jt_key]["sensory_neuron_indices"] = [all_names[key]["Ext_Pos_SN"],
+                                                                      all_names[key]["Flx_Pos_SN"],
+                                                                      all_names[key]["Ext_Vel_SN"],
+                                                                      all_names[key]["Flx_Vel_SN"]]
+
+            ext_in_stance = False
+            if key == "LF_ThC3" or key == "LF_CTr":
+                ext_in_stance = True
+                print(str(key) + " extends in stance phase!")
+
+            generic_names = build_descending_pathways(net, r_net=r_net, k_step_len=0.9, k_rotate=0, joint_name=key,
+                                                      ext_in_stance=ext_in_stance, body_name=body_name)
+            all_names[key].update(generic_names)  # generic_names is currently empty, so it just goofs up all_names.
+            # replace ctrl_index, etc. with joint_props dict
+
+            j_a[leg_key][jt_key] = JointAdapter(name=key, joint_props=jt_value,
+                                                resting_posture_angle=0, min_angle=-0.5, max_angle=0.5,
+                                                swing_duration=sw_duration, max_stance_duration=st_sw_ratio*sw_duration,
+                                                servo_max_speed=mx_28_no_load_speed, servo_kp=servo_kp)
+            max_joint_index = max(max_joint_index, joint_props[leg_key][jt_key]["qpos_index"])
+            max_actuator_index = max(max_actuator_index, joint_props[leg_key][jt_key]["ctrl_index"])
+
+        #  Still leg loop
+        generic_names = build_leg_control_net(net, r_net=r_net, leg_name=leg_key, joint_props=joint_props)
+        all_names[leg_key] = generic_names
+
+        #  Loop through CS  # LF_GP1_CS_SN
+        for cs_key, cs_value in strain_gauge_props[leg_key].items():
+            key = cs_key + "_SN"
+            strain_gauge_props[leg_key][cs_key]["sensory_neuron_index"] = [all_names[leg_key][key]]
+            strain_gauge_data[leg_key][cs_key]["reading"] = 0
+            num_strain_gauges = num_strain_gauges + 1
+
+    #  Instantiate the SNS model and its inputs and outputs
     sns_model = net.compile(dt=sns_dt, backend='numpy', device='cpu', debug=False)
     sns_inputs = np.zeros([num_sns_steps, net.get_num_inputs()])
     #  To step with a constant step length:
     sns_inputs[np.arange(0, np.floor(4 * num_sns_steps / 5), dtype=int), net.get_input_index(
         'droso_step_length_input')] = 0
+
     #  To step forward then reverse direction:
     sns_inputs[:, net.get_input_index('droso_step_length_input')] = -10 * sp.special.erf((sns_tvec - 2 * tmax / 3))
     #  sns_inputs[:, net.get_input_index('body_step_length_input')] = 10*sp.special.erf((sns_tvec - 2*tmax/3))
 
-    for key, value in joint_props.items():
-        rg = key + "_Ext_RG_input"
-        sns_inputs[0, net.get_input_index(rg)] = 1
-        # sns_inputs[np.arange(0, np.floor(num_sns_steps/5), dtype=int), net.get_input_index(rg)] = -10
+    #  Give each joint's extensor RG neuron an excitatory impulse of current upon startup to break unstable equilibrium.
+    for leg_key, leg_value in joint_props.items():
+        for jt_key, jt_value in joint_props[leg_key].items():
+            rg = leg_key + "_" + jt_key + "_Ext_RG_input"
+            stim = 1
+            if jt_key == "LF_ThC1" or jt_key == "LF_TrF" or jt_key == "LF_FTi":
+                stim = -1
+
+            sns_inputs[0, net.get_input_index(rg)] = stim
+            # sns_inputs[np.arange(0, np.floor(num_sns_steps/5), dtype=int), net.get_input_index(rg)] = -10
 
     sns_outputs = np.zeros([num_sns_steps, net.get_num_outputs()])
-    joint_pos = np.zeros([num_mj_steps, len(j_a)])
-    joint_pos_command = np.zeros([num_mj_steps, len(j_a)])
-    joint_vel = np.zeros([num_mj_steps, len(j_a)])
-    joint_vel_command = np.zeros([num_mj_steps, len(j_a)])
-    joint_torque = np.zeros([num_mj_steps, len(j_a)])
+    joint_pos = np.zeros([num_mj_steps, max_joint_index+1])
+    joint_pos_command = np.zeros([num_mj_steps, max_actuator_index+1])
+    joint_vel = np.zeros([num_mj_steps, max_joint_index+1])
+    joint_vel_command = np.zeros([num_mj_steps, max_actuator_index+1])
+    joint_torque = np.zeros([num_mj_steps, max_actuator_index+1])
+    segment_moment = np.zeros([num_mj_steps, num_strain_gauges])
 
     i = int(0)
     i_mj = int(0)
@@ -167,23 +247,32 @@ def main():
 
         if np.mod(i, update_ratio) == 0:
             #  Inform the joint adapter what the MN voltages are
-            for key in joint_props.keys():
-                #  j_a[key].mn_to_servo(v_all=sns_outputs[i-1, j_a[key].mn_indices])
-                j_a[key].mn_to_servo(v_all=sns_outputs[i - 1, :])
+            for leg_key in joint_props.keys():
+                for jt_key in joint_props[leg_key].keys():
+                    #  j_a[key].mn_to_servo(v_all=sns_outputs[i-1, j_a[key].mn_indices])
+                    j_a[leg_key][jt_key].mn_to_servo(v_all=sns_outputs[i - 1, :])
 
-                #  Read current joint state and calculated commanded values for the servo
-                [current_pos, current_vel, desired_pos, desired_vel] = j_a[key].set_servo_commands(state_struct)
+                    #  Read current joint state and calculated commanded values for the servo
+                    [current_pos, current_vel, desired_pos, desired_vel] = (
+                        j_a[leg_key][jt_key].set_servo_commands(state_struct))
 
-                #  Write the servo commands to the MuJoCo model. This could be modified/replaced to communicate with a robot.
-                j_a[key].write_servo_commands(state_struct)
+                    #  Write the servo commands to the MuJoCo model. This could be modified/replaced to communicate with a robot.
+                    j_a[leg_key][jt_key].write_servo_commands(state_struct)
 
-                #  Save values for logging.
-                #  Gotta expand size of joint_pos and joint_vel to account for all the actuated joints.
-                joint_pos[i_mj, j_a[key].qpos_index] = current_pos
-                joint_pos_command[i_mj, j_a[key].ctrl_index] = desired_pos
-                joint_vel[i_mj, j_a[key].qpos_index] = current_vel
-                joint_vel_command[i_mj, j_a[key].ctrl_index] = desired_vel
-                joint_torque[i_mj, j_a[key].ctrl_index] = state_struct.actuator_force[j_a[key].ctrl_index]
+                    #  Save values for logging.
+                    #  Gotta expand size of joint_pos and joint_vel to account for all the actuated joints.
+                    joint_pos[i_mj, j_a[leg_key][jt_key].qpos_index] = current_pos
+                    joint_pos_command[i_mj, j_a[leg_key][jt_key].ctrl_index] = desired_pos
+                    joint_vel[i_mj, j_a[leg_key][jt_key].qpos_index] = current_vel
+                    joint_vel_command[i_mj, j_a[leg_key][jt_key].ctrl_index] = desired_vel
+                    joint_torque[i_mj, j_a[leg_key][jt_key].ctrl_index] = (
+                        state_struct.actuator_force)[j_a[leg_key][jt_key].ctrl_index]
+
+            for leg_key in strain_gauge_props.keys():
+                for sg_key in strain_gauge_props[leg_key].keys():
+                    segment_moment[i_mj, strain_gauge_props[leg_key][sg_key]["torque_sensor_index"]] = (
+                        sga.get_reading_from_mj(strain_gauge_props[leg_key][sg_key], strain_gauge_data[leg_key][sg_key],
+                                                state_struct))
 
             #  Step the MuJuCo model forward. This could be modified/replaced to communicate with a robot.
             #  np.mod(i, 1000) == 0 sets whether to update the video or not.
@@ -195,8 +284,14 @@ def main():
         #  This writes the stored mechanical states to neural currents. Even if mechanics/robot did not update in this
         #  loop, this method acts like "memory" to give the neural system useful information, so we need it in every
         #  loop.
-        for key in joint_props.keys():
-            j_a[key].write_state_to_sensory(sns_inputs[i, :])
+        for leg_key in joint_props.keys():
+            for jt_key in joint_props[leg_key].keys():
+                j_a[leg_key][jt_key].write_state_to_sensory(sns_inputs[i, :])
+
+        for leg_key in strain_gauge_props.keys():
+            for sg_key in strain_gauge_props[leg_key].keys():
+                sga.write_state_to_sensory(strain_gauge_props[leg_key][sg_key], strain_gauge_data[leg_key][sg_key],
+                                           sns_input=sns_inputs[i, :])
 
         sns_outputs[i, :] = sns_model(sns_inputs[i, :])
         # print(state.qvel[index])
@@ -210,13 +305,24 @@ def main():
         data_pack["time"] = mj_tvec.tolist()
     else:
         data_pack["time"] = tvec.tolist()
-    #  store joint angles
-    for key in joint_props.keys():
-        data_pack[str(key) + "_pos"] = joint_pos[:, joint_props[key]["qpos_index"]].tolist()
-        data_pack[str(key) + "_pos_comm"] = joint_pos_command[:, joint_props[key]["ctrl_index"]].tolist()
-        data_pack[str(key) + "_vel"] = joint_vel[:, joint_props[key]["qpos_index"]].tolist()
-        data_pack[str(key) + "_vel_comm"] = joint_vel_command[:, joint_props[key]["ctrl_index"]].tolist()
-        data_pack[str(key) + "_torque"] = joint_pos[:, joint_props[key]["qpos_index"]].tolist()
+    #  store joint states
+    for leg_key in joint_props.keys():
+        for jt_key in joint_props[leg_key].keys():
+            data_pack[str(leg_key) + "_" + str(jt_key) + "_pos"] = (
+                joint_pos[:, joint_props[leg_key][jt_key]["qpos_index"]].tolist())
+            data_pack[str(leg_key) + "_" + str(jt_key) + "_pos_comm"] = (
+                joint_pos_command[:, joint_props[leg_key][jt_key]["ctrl_index"]].tolist())
+            data_pack[str(leg_key) + "_" + str(jt_key) + "_vel"] = (
+                joint_vel[:, joint_props[leg_key][jt_key]["qpos_index"]].tolist())
+            data_pack[str(leg_key) + "_" + str(jt_key) + "_vel_comm"] = (
+                joint_vel_command[:, joint_props[leg_key][jt_key]["ctrl_index"]].tolist())
+            data_pack[str(leg_key) + "_" + str(jt_key) + "_torque"] = (
+                joint_torque[:, joint_props[leg_key][jt_key]["ctrl_index"]].tolist())
+    #  store torque/CS states
+    for leg_key in strain_gauge_props.keys():
+        for sg_key in strain_gauge_props[leg_key].keys():
+            data_pack[str(leg_key) + "_" + str(sg_key) + "_torque"] = (
+                segment_moment[:, strain_gauge_props[leg_key][sg_key]["torque_sensor_index"]].tolist())
     #  store neural states
     if sns_shorter:
         #  Downsample neural data to the physics timestep. THIS MAY CAUSE PROBLEMS WITH SPIKING DATA; SPIKES WILL BE DROPPED
@@ -245,7 +351,7 @@ def main():
     while new_file_size != prev_file_size:
         prev_file_size = new_file_size
         new_file_size = data_file_path.stat().st_size
-        print(f"File size: {new_file_size} bytes.")
+        print(f"File size: {new_file_size*1e-6} MBs.")
         #  Kill time, wait for it to be published.
 
     plot_data(data_file_path)
@@ -253,12 +359,10 @@ def main():
     return data_pack, data_file_path
 
 
-
-
 def key_callback(keycode):
     if chr(keycode) == ' ':
-        global max_speed
-        max_speed = float(input('Enter max speed in rad/s'))
+        max_speed = float(input('Enter floor z coordinate'))
+
         print(max_speed)
 
 
@@ -382,7 +486,7 @@ def build_body_control_net(network, r_net, body_name):
     return generic_names
 
 
-def build_leg_control_net(network, r_net, leg_name):
+def build_leg_control_net(network, r_net, leg_name, joint_props):
     """
 
     :param network: SNS-Toolbox network dictionary to append to
@@ -393,25 +497,143 @@ def build_leg_control_net(network, r_net, leg_name):
     #  These are neurons that all joints in the leg can receive signals from (e.g., walking state) and send signals to
     #  (e.g., leg is moving).
     fast_neuron = NonSpikingNeuron(membrane_conductance=1, membrane_capacitance=5)
-    fast_neuron_tonic = NonSpikingNeuron(membrane_conductance=1, membrane_capacitance=5, bias=r_net)
+    slow_neuron = NonSpikingNeuron(membrane_conductance=1, membrane_capacitance=100)
+    slow_neuron_tonic = NonSpikingNeuron(membrane_conductance=1, membrane_capacitance=100, resting_potential=r_net)
+    slow_neuron_neg_bias = NonSpikingNeuron(membrane_conductance=1, membrane_capacitance=100, resting_potential=-r_net)
 
     generic_names = {}
 
-    #  "Moving in stance" neurons. These reinforce stance phase pattern generator activity.
-    moving_in_stance = "moving_in_stance"
-    generic_names[moving_in_stance] = network.get_num_neurons()
-    moving_in_stance_full_name = add_neuron_input_output(network, fast_neuron, moving_in_stance, leg_name)
+    #  Add load sensory neurons, which belong to the leg, not any particular joint.
+    cs_sens_neur_gp1 = "GP1_CS_SN"
+    generic_names[cs_sens_neur_gp1] = network.get_num_neurons()
+    cs_sens_neur_gp1_full_name = add_neuron_input_output(network, fast_neuron, cs_sens_neur_gp1, leg_name)
     #  Full name is required to create synapses.
+
+    cs_sens_neur_gp2 = "GP2_CS_SN"
+    generic_names[cs_sens_neur_gp2] = network.get_num_neurons()
+    cs_sens_neur_gp2_full_name = add_neuron_input_output(network, fast_neuron, cs_sens_neur_gp2, leg_name)
+
+    cs_sens_neur_gp3 = "GP3_CS_SN"
+    generic_names[cs_sens_neur_gp3] = network.get_num_neurons()
+    cs_sens_neur_gp3_full_name = add_neuron_input_output(network, fast_neuron, cs_sens_neur_gp3, leg_name)
+
+    cs_sens_neur_gp4 = "GP4_CS_SN"
+    generic_names[cs_sens_neur_gp4] = network.get_num_neurons()
+    cs_sens_neur_gp4_full_name = add_neuron_input_output(network, fast_neuron, cs_sens_neur_gp4, leg_name)
+
+    cs_sens_neur_gp6a = "GP6A_CS_SN"
+    generic_names[cs_sens_neur_gp6a] = network.get_num_neurons()
+    cs_sens_neur_gp6a_full_name = add_neuron_input_output(network, fast_neuron, cs_sens_neur_gp6a, leg_name)
+
+    cs_sens_neur_gp6b = "GP6B_CS_SN"
+    generic_names[cs_sens_neur_gp6b] = network.get_num_neurons()
+    cs_sens_neur_gp6b_full_name = add_neuron_input_output(network, fast_neuron, cs_sens_neur_gp6b, leg_name)
 
     #  "AEP reached" neurons. These trigger leg depression.
     aep_reached = "aep_reached"
     generic_names[aep_reached] = network.get_num_neurons()
-    aep_reached_full_name = add_neuron_input_output(network, fast_neuron, aep_reached, leg_name)
+    aep_reached_full_name = add_neuron_input_output(network, slow_neuron_tonic, aep_reached, leg_name)
 
     #  "PEP reached" neurons. These trigger leg elevation.
     pep_reached = "pep_reached"
     generic_names[pep_reached] = network.get_num_neurons()
-    pep_reached_full_name = add_neuron_input_output(network, fast_neuron, pep_reached, leg_name)
+    pep_reached_full_name = add_neuron_input_output(network, slow_neuron, pep_reached, leg_name)
+
+    e_ex = 220
+    g_k_1 = g_syn_from_k(k=1, rev_pot=e_ex, volt_range=r_net)
+    dep_k_1 = NonSpikingSynapse(e_lo=0, e_hi=r_net, max_conductance=g_k_1, reversal_potential=e_ex)
+
+    e_gain = -10
+    g_gain = 2
+    hyp_gain_binary = NonSpikingSynapse(e_lo=0, e_hi=0.1, max_conductance=g_gain, reversal_potential=e_gain)
+
+    #  To start, Gp3 is the primary indicator of stance phase. This neuron excites pep_reached.
+    network.add_connection(dep_k_1, source=cs_sens_neur_gp3_full_name, destination=pep_reached_full_name)
+
+    #  Generate names of neurons we need to synapse onto PEP Reached (and PEP Reached needs to synapse onto).
+    #  Loop through each joint, check if ctr. If so, PEP Reached inhibits leg depression.
+    #  If not ctr, synapse that joint's sensory data onto PEP neurons:
+    num_not_ctr_joints = 0
+    num_ctr_joints = 0
+    for jt_key, jt_value in joint_props[leg_name].items():
+        if jt_value["is_ctr"]:
+            ctr_ext_str = leg_name + "_" + str(jt_key) + "_" + "Ext_RG"
+            hyp_ctr_ext = NonSpikingSynapse(e_lo=0, e_hi=r_net, reversal_potential=-100, max_conductance=400e-3)
+            network.add_connection(hyp_ctr_ext, source=pep_reached_full_name, destination=ctr_ext_str)
+            num_ctr_joints = num_ctr_joints + 1
+        else:
+            ext_src_str = leg_name + "_" + str(jt_key) + "_" + "Ext_is_Stance_PEP"
+            flx_src_str = leg_name + "_" + str(jt_key) + "_" + "Flx_is_Stance_PEP"
+
+            network.add_connection(hyp_gain_binary, source=ext_src_str, destination=pep_reached_full_name)
+            network.add_connection(hyp_gain_binary, source=flx_src_str, destination=pep_reached_full_name)
+            num_not_ctr_joints = num_not_ctr_joints + 1
+
+    #  Inhibitory IN from load to AEP Reached
+    load_inh_IN = "inh_IN"
+    generic_names[load_inh_IN] = network.get_num_neurons()
+    load_inh_IN_full_name = add_neuron_input_output(network, fast_neuron, load_inh_IN, leg_name)
+
+    network.add_connection(dep_k_1, source=cs_sens_neur_gp3_full_name, destination=load_inh_IN_full_name)
+
+    #  Inhibitory IN inhibits AEP Reached
+    network.add_connection(hyp_gain_binary, source=load_inh_IN_full_name, destination=aep_reached_full_name)
+
+    #  Generate names of neurons we need to synapse onto AEP Reached (and AEP Reached needs to synapse onto).
+    #  Loop through each joint, check if ctr. If so, AEP Reached inhibits leg depression.
+    #  If not ctr, synapse that joint's sensory data onto AEP neurons:
+    for jt_key, jt_value in joint_props[leg_name].items():
+        if jt_value["is_ctr"]:
+            ctr_flx_str = leg_name + "_" + str(jt_key) + "_" + "Flx_RG"
+            #-10, 400
+            hyp_ctr_flx = NonSpikingSynapse(e_lo=0, e_hi=r_net, reversal_potential=-100, max_conductance=400e-3)
+
+            network.add_connection(hyp_ctr_flx, source=pep_reached_full_name, destination=ctr_flx_str)
+        else:
+            ext_src_str = leg_name + "_" + str(jt_key) + "_" + "Ext_is_Stance_AEP"
+            flx_src_str = leg_name + "_" + str(jt_key) + "_" + "Flx_is_Stance_AEP"
+
+            network.add_connection(hyp_gain_binary, source=ext_src_str, destination=aep_reached_full_name)
+            network.add_connection(hyp_gain_binary, source=flx_src_str, destination=aep_reached_full_name)
+
+    #  Create a neuron that signals that the leg is "moving in stance": this reinforces stance phase in all joints' RGs.
+    #  "Moving in stance" neurons. These reinforce stance phase pattern generator activity.
+    moving_in_stance = "moving_in_stance"
+    generic_names[moving_in_stance] = network.get_num_neurons()
+    moving_in_stance_full_name = add_neuron_input_output(network, slow_neuron_neg_bias, moving_in_stance, leg_name)
+
+    network.add_connection(dep_k_1, source=cs_sens_neur_gp4_full_name, destination=moving_in_stance_full_name)
+
+    k_syn = 1/num_not_ctr_joints
+    e_exc = 220
+    g_exc = g_syn_from_k(k=k_syn, rev_pot=e_exc, volt_range=r_net)
+    dep_vel_to_moving = NonSpikingSynapse(e_lo=0, e_hi=r_net, max_conductance=g_exc, reversal_potential=e_exc)
+    for jt_key, jt_value in joint_props[leg_name].items():
+        if jt_value["is_ctr"]:
+            """
+            ctr_flx_str = leg_name + "_" + str(jt_key) + "_" + "Flx_RG"
+            #-10, 400
+            hyp_ctr_flx = NonSpikingSynapse(e_lo=0, e_hi=r_net, reversal_potential=-100, max_conductance=400e-3)
+
+            network.add_connection(hyp_ctr_flx, source=pep_reached_full_name, destination=ctr_flx_str)
+            """
+        else:
+            #  Connect this joint's velocity feedback to moving_in_stance:
+            ext_src_str = leg_name + "_" + str(jt_key) + "_" + "Exting_in_Stance_Dendrite"
+            flx_src_str = leg_name + "_" + str(jt_key) + "_" + "Flxing_in_Stance_Dendrite"
+
+            #  Both synapses have the same source, because joint-level logic will suppress the pathway that encodes
+            #  swing phase motion.
+            network.add_connection(dep_vel_to_moving, source=ext_src_str, destination=moving_in_stance_full_name)
+            network.add_connection(dep_vel_to_moving, source=flx_src_str, destination=moving_in_stance_full_name)
+
+            ext_dest_str = leg_name + "_" + str(jt_key) + "_" + "Ext_is_Stance_Load"
+            flx_dest_str = leg_name + "_" + str(jt_key) + "_" + "Flx_is_Stance_Load"
+
+            network.add_connection(dep_k_1, source=moving_in_stance_full_name, destination=ext_dest_str)
+            network.add_connection(dep_k_1, source=moving_in_stance_full_name, destination=flx_dest_str)
+
+    return generic_names
 
 
 def build_descending_pathways(network, r_net, k_step_len, k_rotate, joint_name, ext_in_stance, body_name):
@@ -464,8 +686,8 @@ def build_descending_pathways(network, r_net, k_step_len, k_rotate, joint_name, 
     not_walking_full_name = body_name + "_not_walking"
     network.add_connection(hyp_mult, source=not_walking_full_name, destination=not_walking_IN_full_name)
 
-    exting_dend_full_name = joint_name + "_Exting_Dendrite"
-    flxing_dend_full_name = joint_name + "_Flxing_Dendrite"
+    exting_dend_full_name = joint_name + "_Ext_Vel_to_MN_Dendrite"
+    flxing_dend_full_name = joint_name + "_Flx_Vel_to_MN_Dendrite"
 
     network.add_connection(hyp_mult, source=not_walking_IN_full_name, destination=exting_dend_full_name)
     network.add_connection(hyp_mult, source=not_walking_IN_full_name, destination=flxing_dend_full_name)
@@ -658,11 +880,11 @@ def build_joint_control_net(network, r_net, is_ctr, joint_name, ext_pep_rest, fl
     network.add_connection(hyp_gain, source=ext_is_stance_full_name, destination=too_exted_full_name)
 
     # Set up negative velocity FB to the MNs, which is disabled during locomotion.
-    exting_dend = "Exting_Dendrite"
+    exting_dend = "Ext_Vel_to_MN_Dendrite"
     generic_names[exting_dend] = network.get_num_neurons()
     exting_dend_full_name = add_neuron_input_output(network, fast_neuron, exting_dend, joint_name)
 
-    flxing_dend = "Flxing_Dendrite"
+    flxing_dend = "Flx_Vel_to_MN_Dendrite"
     generic_names[flxing_dend] = network.get_num_neurons()
     flxing_dend_full_name = add_neuron_input_output(network, fast_neuron, flxing_dend, joint_name)
 
@@ -671,6 +893,8 @@ def build_joint_control_net(network, r_net, is_ctr, joint_name, ext_pep_rest, fl
 
     network.add_connection(dep_k_1, source=exting_dend_full_name, destination=flx_mn_full_name)
     network.add_connection(dep_k_1, source=flxing_dend_full_name, destination=ext_mn_full_name)
+
+    hyp_k_neg_0p4 = NonSpikingSynapse(e_lo=0, e_hi=20, max_conductance=80e-3, reversal_potential=-100)
 
     if not is_ctr:
         # Add more neurons that control RG activation and report position to other joints
@@ -687,28 +911,28 @@ def build_joint_control_net(network, r_net, is_ctr, joint_name, ext_pep_rest, fl
         network.add_connection(hyp_gain, source=ext_is_stance_full_name, destination=flx_stance_load_full_name)
         network.add_connection(hyp_gain, source=flx_is_stance_full_name, destination=ext_stance_load_full_name)
 
-        exting = "Exting_in_Stance"
+        network.add_connection(hyp_k_neg_0p4, source=flx_stance_load_full_name, destination=ext_rg_full_name)
+        network.add_connection(hyp_k_neg_0p4, source=ext_stance_load_full_name, destination=flx_rg_full_name)
+
+        exting = "Exting_in_Stance_Dendrite"
         generic_names[exting] = network.get_num_neurons()
         exting_full_name = add_neuron_input_output(network, fast_neuron, exting, joint_name)
 
-        flxing = "Flxing_in_Stance"
+        flxing = "Flxing_in_Stance_Dendrite"
         generic_names[flxing] = network.get_num_neurons()
         flxing_full_name = add_neuron_input_output(network, fast_neuron, flxing, joint_name)
 
         network.add_connection(dep_k_1, source=ext_vel_sn_full_name, destination=exting_full_name)
         network.add_connection(dep_k_1, source=flx_vel_sn_full_name, destination=flxing_full_name)
 
-        # State-dependent silencing of positive velocity FB to CPGs.
+        # State-dependent silencing of positive velocity FB to leg level "moving in stance" neuron.
         network.add_connection(hyp_gain, source=ext_is_stance_full_name, destination=flxing_full_name)
         network.add_connection(hyp_gain, source=flx_is_stance_full_name, destination=exting_full_name)
 
         # Positive feedback to CPG.
-        network.add_connection(dep_nsi_fb, source=exting_full_name, destination=ext_rg_full_name)
-        network.add_connection(dep_nsi_fb, source=flxing_full_name, destination=flx_rg_full_name)
-
-        # Positive feedback to MNs; still hashing this out.
-        # network.add_connection(dep_nsi_fb, source=exting_full_name, destination=ext_mn_full_name)
-        # network.add_connection(dep_nsi_fb, source=flxing_full_name, destination=flx_mn_full_name)
+        # In reality, this depends on load feedback as well, so is integrated at the leg level.
+        #  network.add_connection(dep_nsi_fb, source=exting_full_name, destination=ext_rg_full_name)
+        #  network.add_connection(dep_nsi_fb, source=flxing_full_name, destination=flx_rg_full_name)
 
         # Joint-level determination of whether AEP or PEP have been reached. This will ultimately be replaced by
         # leg-level network that determines where the foot is in space.

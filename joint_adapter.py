@@ -3,14 +3,14 @@ import matplotlib.pyplot as plt
 import time
 
 class JointAdapter:
-    def __init__(self, name, joint_props, mn_indices, sens_neur_indices, resting_posture_angle, min_angle, max_angle,
+    def __init__(self, name, joint_props, resting_posture_angle, min_angle, max_angle,
                  swing_duration, max_stance_duration, r=20, servo_max_speed=6.0, servo_kp=1.0):
         self.name = name
         self.ctrl_index = joint_props["ctrl_index"]
         self.qpos_index = joint_props["qpos_index"]
         self.is_ctr = joint_props["is_ctr"]
-        self.mn_indices = mn_indices
-        self.sens_neur_indices = sens_neur_indices
+        self.mn_indices = joint_props["motor_neuron_indices"]
+        self.sens_neur_indices = joint_props["sensory_neuron_indices"]
         self.resting_posture_angle = resting_posture_angle
         self.min_angle = min_angle
         self.max_angle = max_angle

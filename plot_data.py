@@ -18,14 +18,16 @@ def plot_data(file_name, time_column_key="time"):
     except ValueError:
         print("File name " + str(file_name) + " not recognized as valid .json file.")
 
+    print_list = True
     plot_another_graph = True
 
     while plot_another_graph:
         #  Display the list of data that may be plotted
-        i = 0
-        for key in data.keys():
-            print(str(i) + ":\t" + str(key))
-            i = i + 1
+        if print_list:
+            i = 0
+            for key in data.keys():
+                print(str(i) + ":\t" + str(key))
+                i = i + 1
 
         fields_to_plot = [int(x) for x in input("Enter a space-separated sequence of entries to plot: ").split(" ")]
 
@@ -96,7 +98,13 @@ def plot_data(file_name, time_column_key="time"):
         plt.draw()
         plt.show()
 
-        to_quit = input("To quit, enter ''q''. To plot another graph, enter anything but q. ")
+        to_quit = input("To quit, enter ''q''.\nTo plot another graph, enter anything but q.\n\tTo re-list the data"
+                        "headings, enter ''r''.\n\tTo skip re-listing the data headings, enter anything but ''r''. ")
 
         if to_quit == "q" or to_quit == "Q":
             plot_another_graph = False
+
+        if to_quit == "r" or to_quit == "R":
+            print_list = True
+        else:
+            print_list = False
