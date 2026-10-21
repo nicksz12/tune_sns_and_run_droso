@@ -1,3 +1,8 @@
+def return_empty_strain_gauge_adapter():
+    sga = {"torque_sensor_index": 1, "sensory_neuron_index": None, "a": 1, "b": 0, "min_strain": -1000,
+           "current_at_min_strain": 0, "max_strain": 1000, "current_at_max_strain": 0}
+    return sga
+
 
 def get_reading_from_mj(sgp, sgd, mj_data):
     """

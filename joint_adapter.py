@@ -3,8 +3,8 @@ import matplotlib.pyplot as plt
 import time
 
 class JointAdapter:
-    def __init__(self, name, joint_props, resting_posture_angle, min_angle, max_angle,
-                 swing_duration, max_stance_duration, r=20, servo_max_speed=6.0, servo_kp=1.0):
+    def __init__(self, name, joint_props, resting_posture_angle=0, min_angle=-1, max_angle=1,
+                 swing_duration=1, max_stance_duration=4, r=20, servo_max_speed=6.0, servo_kp=1.0):
         self.name = name
         self.ctrl_index = joint_props["ctrl_index"]
         self.qpos_index = joint_props["qpos_index"]
@@ -214,7 +214,6 @@ class JointAdapter:
 
     def mn_to_servo(self, **kwargs):
         '''
-
         :param kwargs:  v_all: pass all network neuron voltages at this instant, pick out MN indices.
                         v_mn_ext, v_mn_flx: pass 2 scalars for extensor and flexor motor neuron voltage.
         :return: self.comm_angle, self.comm_speed
