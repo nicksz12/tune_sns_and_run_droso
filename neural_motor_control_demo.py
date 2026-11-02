@@ -430,7 +430,7 @@ def main(mech_model_file_path='mjcf/Drosophibot_custom_actuators.xml', sns_contr
         #  load up a file with a struct of the IK solutions in it.
 
         # Walk straight ahead
-        trans_ind = 6
+        trans_ind = 0
         rot_ind = 5
 
         # Pivot around the hind legs
